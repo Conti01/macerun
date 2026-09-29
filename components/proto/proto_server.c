@@ -57,14 +57,14 @@ typedef enum
 #define PROTO_LIGHT_SECTION_COUNT (PROTO_SECTION_COUNT + 2)
 #define PROTO_HEIGHTMAP_ENTRY_COUNT 256
 #define PROTO_HEIGHTMAP_BITS_PER_ENTRY 9
-#define PROTO_HEIGHTMAP_LONG_COUNT 36
+#define PROTO_HEIGHTMAP_LONG_COUNT 37
 #define PROTO_BIOME_ARRAY_COUNT (4 * 4 * 64)
 #define PROTO_CHUNK_LIGHT_EMPTY_MASK ((1 << PROTO_LIGHT_SECTION_COUNT) - 1)
 /* 8 bits per block entry: the section palette has 17 entries, which does not
  * fit the 16 slots a 4-bit container allows (chest = palette index 16 used to
  * spill into neighboring block values and breaks the vanilla 16-slot linear
  * palette limit for bits=4). 8 bits -> 8 entries per long, no bit spanning. */
-#define PROTO_CHUNK_BITS_PER_BLOCK 8
+#define PROTO_CHUNK_BITS_PER_BLOCK 5
 #define PROTO_WORLD_NVS_NAMESPACE "macerun"
 #define PROTO_WORLD_NVS_KEY "world_deltas"
 #define PROTO_INVENTORY_NVS_KEY_PREFIX "inv_"
@@ -615,7 +615,7 @@ static int32_t world_block_to_state_id(uint8_t block_id)
     case BLOCK_FURNACE:
         return 3374;
     case BLOCK_CHEST:
-        return 3765;
+        return 2034;
     default:
         return 1;
     }
@@ -1302,7 +1302,7 @@ static bool send_open_window_packet(int socket_fd,
     proto_writer_init(&writer, s_proto_packet_buffer, sizeof(s_proto_packet_buffer));
 
     if (!proto_write_varint(&writer, active_profile()->s2c_play_open_window) ||
-        !proto_write_u8(&writer, PROTO_CHEST_WINDOW_ID) ||
+        !proto_write_varint(&writer, PROTO_CHEST_WINDOW_ID) ||
         !proto_write_varint(&writer, PROTO_CHEST_WINDOW_TYPE))
     {
         return false;
@@ -1338,7 +1338,7 @@ static bool send_window_items_packet(int socket_fd,
     }
 
     size_t count_pos = writer.length;
-    if (!proto_write_varint(&writer, 0))
+    if (!proto_write_u16_be(&writer, 0))
     {
         return false;
     }
@@ -1367,7 +1367,7 @@ static bool send_window_items_packet(int socket_fd,
 
     size_t saved_length = writer.length;
     writer.length = count_pos;
-    if (!proto_write_varint(&writer, (int32_t)slot_count))
+    if (!proto_write_u16_be(&writer, (uint16_t)slot_count))
     {
         return false;
     }
@@ -1586,7 +1586,7 @@ static bool send_crafting_table_open_packet(int socket_fd,
     proto_writer_init(&writer, s_proto_packet_buffer, sizeof(s_proto_packet_buffer));
 
     if (!proto_write_varint(&writer, active_profile()->s2c_play_open_window) ||
-        !proto_write_u8(&writer, PROTO_CRAFTING_TABLE_WINDOW_ID) ||
+        !proto_write_varint(&writer, PROTO_CRAFTING_TABLE_WINDOW_ID) ||
         !proto_write_varint(&writer, PROTO_CRAFTING_TABLE_WINDOW_TYPE))
     {
         return false;
@@ -1616,7 +1616,7 @@ static bool send_crafting_table_window_items(int socket_fd,
     }
 
     size_t count_pos = writer.length;
-    if (!proto_write_varint(&writer, 0))
+    if (!proto_write_u16_be(&writer, 0))
     {
         return false;
     }
@@ -1657,7 +1657,7 @@ static bool send_crafting_table_window_items(int socket_fd,
 
     size_t saved_length = writer.length;
     writer.length = count_pos;
-    if (!proto_write_varint(&writer, (int32_t)slot_count))
+    if (!proto_write_u16_be(&writer, (uint16_t)slot_count))
     {
         return false;
     }
@@ -2658,15 +2658,11 @@ static void pack_heightmap(const uint16_t height_samples[PROTO_HEIGHTMAP_ENTRY_C
     for (int32_t index = 0; index < PROTO_HEIGHTMAP_ENTRY_COUNT; index++)
     {
         uint64_t value = (uint64_t)(height_samples[index] & 0x1FFu);
-        int32_t bit_index = index * PROTO_HEIGHTMAP_BITS_PER_ENTRY;
-        int32_t long_index = bit_index / 64;
-        int32_t bit_offset = bit_index % 64;
+        int32_t entries_per_long = 64 / PROTO_HEIGHTMAP_BITS_PER_ENTRY;
+        int32_t long_index = index / entries_per_long;
+        int32_t bit_offset = (index % entries_per_long) * PROTO_HEIGHTMAP_BITS_PER_ENTRY;
 
         packed_heightmap[long_index] |= value << bit_offset;
-        if (bit_offset > (64 - PROTO_HEIGHTMAP_BITS_PER_ENTRY) && (long_index + 1) < PROTO_HEIGHTMAP_LONG_COUNT)
-        {
-            packed_heightmap[long_index + 1] |= value >> (64 - bit_offset);
-        }
     }
 }
 
@@ -2748,26 +2744,43 @@ static bool encode_chunk_sections(int32_t chunk_x,
             }
         }
 
-        if (!proto_write_varint(&chunk_writer, PROTO_SECTION_VOLUME / 8))
-        {
-            return false;
-        }
+        const int32_t entries_per_long = 64 / PROTO_CHUNK_BITS_PER_BLOCK;
+        const int32_t long_count =
+	    (PROTO_SECTION_VOLUME + entries_per_long - 1) / entries_per_long;
 
-        for (int32_t long_index = 0; long_index < (PROTO_SECTION_VOLUME / 8); long_index++)
-        {
-            uint64_t packed = 0;
-            for (int32_t value_index = 0; value_index < 8; value_index++)
-            {
-                int32_t block_index = (long_index * 8) + value_index;
-                uint64_t palette_index = (uint64_t)palette_indices[block_index];
-                packed |= palette_index << (value_index * 8);
-            }
+	if (!proto_write_varint(&chunk_writer, long_count))
+	{
+	    return false;
+	}
 
-            if (!proto_write_i64_be(&chunk_writer, (int64_t)packed))
-            {
-                return false;
-            }
-        }
+	for (int32_t long_index = 0; long_index < long_count; long_index++)
+	{
+	    uint64_t packed = 0;
+
+	    for (int32_t value_index = 0;
+	         value_index < entries_per_long;
+	         value_index++)
+	    {
+	        int32_t block_index =
+	            (long_index * entries_per_long) + value_index;
+
+	        if (block_index >= PROTO_SECTION_VOLUME)
+	        {
+	            break;
+	        }
+
+	        uint64_t palette_index =
+	            (uint64_t)palette_indices[block_index];
+
+	        packed |= palette_index <<
+	                  (value_index * PROTO_CHUNK_BITS_PER_BLOCK);
+	    }
+
+	    if (!proto_write_i64_be(&chunk_writer, (int64_t)packed))
+	    {
+	        return false;
+	    }
+	}
     }
 
     *section_mask_out = section_mask;
@@ -2865,7 +2878,7 @@ static bool send_map_chunk_packet(int socket_fd,
     }
 
     /* 754 biome array: count varint (1024) followed by 1024 VARINT biome
-     * registry ids (1 = minecraft:plains). Writing each biome as a 4-byte
+     * registry ids (0 = minecraft:plains). Writing each biome as a 4-byte
      * int made the client consume only 1024 of the 4096 bytes: its next
      * reads then decoded buffer length = 0 and block entities = 0 out of
      * the remaining zero bytes, leaving 13458 unread bytes -> client aborts
@@ -2873,7 +2886,7 @@ static bool send_map_chunk_packet(int socket_fd,
      * extra whilst reading packet 32". */
     for (int32_t i = 0; i < 1024; i++)
     {
-        if (!proto_write_varint(&writer, 1))
+        if (!proto_write_varint(&writer, 0))
         {
             ESP_LOGW(TAG,
                      "chunk biome write failed at (%ld,%ld): i=%d",
@@ -3606,7 +3619,8 @@ static bool send_player_position_look_packet(int socket_fd,
         !write_f64_be(&writer, connection->pos_z) ||
         !write_f32_be(&writer, connection->yaw) ||
         !write_f32_be(&writer, connection->pitch) ||
-        !proto_write_u8(&writer, connection->on_ground ? 1 : 0))
+        !proto_write_u8(&writer, 0) ||
+        !proto_write_varint(&writer, 0))
     {
         return false;
     }

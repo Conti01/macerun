@@ -156,13 +156,22 @@ static bool socket_send_all(void *context, int socket_fd, const uint8_t *data, s
 
     while (sent < length)
     {
-        ssize_t result = send(socket_fd, data + sent, length - sent, 0);
+        size_t remaining = length - sent;
+        size_t write_size = remaining > 1440 ? 1440 : remaining;
+
+        ssize_t result = send(socket_fd, data + sent, write_size, 0);
         if (result > 0)
         {
-            sent += (size_t)result;
-            stalled_retries = 0;
-            stall_started_ticks = 0;
-            continue;
+           sent += (size_t)result;
+           stalled_retries = 0;
+           stall_started_ticks = 0;
+
+           if (length > 2048)
+           {
+               vTaskDelay(1);
+           }
+
+           continue;
         }
 
         if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))

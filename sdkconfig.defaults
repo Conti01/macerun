@@ -24,3 +24,4 @@ CONFIG_SPIRAM_SPEED_80M=y
 # lwIP: compile in SO_RCVBUF support used by accepted client sockets.
 # (SO_SNDBUF has no Kconfig in newer IDF; that setsockopt is best-effort.)
 CONFIG_LWIP_SO_RCVBUF=y
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
