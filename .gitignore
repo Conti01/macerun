@@ -5,3 +5,7 @@ sdkconfig.old
 eim_config.toml
 macerun-dsv.md
 /graphify-out
+
+# Local protocol debugging
+*.pcap
+*.before_protocol_audit
