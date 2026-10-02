@@ -68,8 +68,9 @@ typedef struct
     int32_t previous_chunk_center_z;
     float fall_distance;
     uint64_t chunk_unload_grace_until_ms;
+    uint64_t next_chunk_stream_ms;
     uint16_t chunk_scan_index;
-    uint16_t chunk_sent_count;
+    uint16_t chunk_sent_count;	
     proto_chunk_coord_t sent_chunks[SERVER_CHUNK_TRACKED_MAX];
     uint8_t selected_hotbar_slot;
     uint16_t inventory_item_ids[46];

@@ -3741,6 +3741,7 @@ static bool broadcast_chat_text(int source_socket_fd,
 
 static void reset_chunk_stream_state(proto_connection_t *connection)
 {
+    connection->next_chunk_stream_ms = 0;
     connection->chunk_stream_initialized = false;
     connection->chunk_center_x = 0;
     connection->chunk_center_z = 0;
@@ -5569,16 +5570,15 @@ void proto_tick_connection(proto_connection_t *connection,
         }
     }
 
-    static uint64_t s_next_chunk_stream_ms;
 
     int32_t chunk_send_budget = SERVER_CHUNK_SENDS_PER_TICK;
-    if (now_ms < s_next_chunk_stream_ms)
+    if (now_ms < connection->next_chunk_stream_ms)
     {
         chunk_send_budget = 0;
     }
     else if (chunk_send_budget > 0)
     {
-        s_next_chunk_stream_ms = now_ms + PROTO_CHUNK_STREAM_PACE_MS;
+        connection->next_chunk_stream_ms = now_ms + PROTO_CHUNK_STREAM_PACE_MS;
     }
 
     for (int32_t send_index = 0; send_index < chunk_send_budget; send_index++)
